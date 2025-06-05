@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>🎶 My Static “Live” Stream</title>
+
+  <style>
+    /* ─── Basic Dark‐Mode‐Style Layout ────────────────────────────────────── */
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #121212;
+      color: #f0f0f0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+    }
+    header {
+      background: #1f1f1f;
+      padding: 1rem;
+      text-align: center;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.6);
+    }
+    header h1 {
+      margin: 0;
+      font-size: 1.5rem;
+      color: #f0f0f0;
+    }
+    main {
+      flex: 1;
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 2rem 1rem;
+      box-sizing: border-box;
+      text-align: center;
+    }
+    #status {
+      margin-bottom: 1rem;
+      font-size: 1.1rem;
+    }
+    audio {
+      width: 100%;
+      border-radius: 4px;
+      margin-bottom: 1rem;
+    }
+    #playlist {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      text-align: left;
+      max-height: 300px;
+      overflow-y: auto;
+      border-top: 1px solid #333;
+      border-bottom: 1px solid #333;
+    }
+    #playlist li {
+      padding: 0.5rem 0.75rem;
+      border-bottom: 1px solid #333;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    #playlist li:hover {
+      background: #2a2a2a;
+    }
+    #playlist li.playing {
+      background: #333;
+      font-weight: bold;
+    }
+    footer {
+      background: #1f1f1f;
+      padding: 1rem;
+      text-align: center;
+      font-size: 0.9rem;
+      color: #bbb;
+    }
+    a {
+      color: #4aa;
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h1>🎶 My Static “Live” Stream</h1>
+  </header>
+
+  <main>
+    <p id="status">Loading playlist…</p>
+    <audio id="player" controls autoplay></audio>
+    <ul id="playlist"></ul>
+  </main>
+
+  <footer>
+    &copy; 2025 My Static Stream · Hosted on 
+    <a href="https://pages.github.com/" target="_blank">GitHub Pages</a>
+  </footer>
+
+  <script>
+  (async function() {
+    // ─── 1. CONFIG: Replace these with your actual GitHub info ───────────────
+    const GITHUB_USER = "GITHUB_USER";   // ← e.g. "alice"
+    const REPO_NAME   = "REPO_NAME";     // ← e.g. "my-static-stream"
+    const BRANCH      = "main";          // ← or "master" if that’s your default
+
+    // Folder paths (inside your repo):
+    const REGULAR_PATH   = "music/regular";
+    const CHRISTMAS_PATH = "music/christmas";
+
+    // ─── 2. Determine whether “Christmas mode” (any day in December) ────────
+    function isChristmasMonth() {
+      const now = new Date();
+      return now.getMonth() === 11; // 11 = December (months are 0–11 in JS)
+    }
+
+    // ─── 3. Fetch all files from the chosen folder via the GitHub API ───────
+    const folder = isChristmasMonth() ? CHRISTMAS_PATH : REGULAR_PATH;
+    const contentsApiUrl = 
+      `https://api.github.com/repos/${GITHUB_USER}/${REPO_NAME}/contents/${folder}?ref=${BRANCH}`;
+
+    const statusEl   = document.getElementById("status");
+    const audioEl    = document.getElementById("player");
+    const playlistEl = document.getElementById("playlist");
+
+    try {
+      statusEl.textContent = "📡 Fetching playlist from GitHub…";
+
+      const resp = await fetch(contentsApiUrl);
+      if (!resp.ok) throw new Error(`GitHub API returned ${resp.status}`);
+      const items = await resp.json();
+
+      // Filter to only .mp3 or .ogg files
+      let tracks = items
+        .filter(item => item.type === "file" && /\.(mp3|ogg)$/i.test(item.name))
+        .map(item => ({
+          name: item.name,
+          url: item.download_url
+        }));
+
+      if (tracks.length === 0) {
+        statusEl.textContent = `🚨 No files found in “${folder}”`;
+        return;
+      }
+
+      // ─── 4. DETERMINISTIC SHUFFLE ────────────────────────────────────
+      // We use a fixed seed so the shuffle is the same every time (until you edit code).
+      // You can change SEED_STRING to anything—e.g. use the repo name, or a date string to
+      // reshuffle daily. But here we pick a constant so reloads don't reshuffle.
+      const SEED_STRING = "STATIC_BROADCAST_SEED_V1";
+
+      // Simple xmur3 hash to produce a 32-bit integer seed from SEED_STRING
+      function xmur3(str) {
+        let h = 1779033703 ^ str.length;
+        for (let i = 0; i < str.length; i++) {
+          h = Math.imul(h ^ str.charCodeAt(i), 3432918353);
+          h = (h << 13) | (h >>> 19);
+        }
+        return () => {
+          h = Math.imul(h ^ (h >>> 16), 2246822507);
+          h = Math.imul(h ^ (h >>> 13), 3266489909);
+          h ^= h >>> 16;
+          return (h >>> 0);
+        };
+      }
+      // Mulberry32 PRNG
+      function mulberry32(a) {
+        return function() {
+          let t = (a += 0x6D2B79F5);
+          t = Math.imul(t ^ (t >>> 15), t | 1);
+          t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+
+      // Create a seeded RNG from SEED_STRING
+      const seedFunc = xmur3(SEED_STRING);
+      const rand = mulberry32(seedFunc());
+
+      // Fisher–Yates shuffle, using our `rand()` for randomness
+      function shuffle(array) {
+        for (let i = array.length - 1; i > 0; i--) {
+          const j = Math.floor(rand() * (i + 1));
+          [array[i], array[j]] = [array[j], array[i]];
+        }
+      }
+      shuffle(tracks);
+
+      // ─── 5. BUILD PLAYLIST UI ────────────────────────────────────────
+      tracks.forEach((track, idx) => {
+        const li = document.createElement("li");
+        li.textContent = track.name;
+        li.dataset.index = idx;
+        li.addEventListener("click", () => playTrack(idx));
+        playlistEl.appendChild(li);
+      });
+
+      statusEl.textContent = isChristmasMonth()
+        ? "🎄 Christmas mode: playing December tracks."
+        : "▶ Playing normal tracks.";
+
+      // ─── 6. PLAYBACK LOGIC ──────────────────────────────────────────
+      let currentIndex = 0;
+
+      function updatePlaylistHighlight() {
+        Array.from(playlistEl.children).forEach(li => li.classList.remove("playing"));
+        const activeLi = playlistEl.querySelector(`li[data-index="${currentIndex}"]`);
+        if (activeLi) activeLi.classList.add("playing");
+      }
+
+      function playTrack(idx) {
+        if (idx < 0 || idx >= tracks.length) return;
+        currentIndex = idx;
+        const { url, name } = tracks[currentIndex];
+        audioEl.src = url;
+        audioEl.play().catch(() => { /* ignore if autoplay is blocked */ });
+        statusEl.textContent = `▶ Playing: ${name}`;
+        updatePlaylistHighlight();
+      }
+
+      audioEl.addEventListener("ended", () => {
+        const nextIdx = (currentIndex + 1) % tracks.length;
+        playTrack(nextIdx);
+      });
+
+      // Start with the first track in the shuffled list
+      playTrack(0);
+
+    } catch (err) {
+      console.error(err);
+      statusEl.textContent = "⚠️ Error loading playlist: " + err.message;
+    }
+  })();
+  </script>
+</body>
+</html>
